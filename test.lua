@@ -2,7 +2,7 @@
 --
 -- Yujia Li, 02/2016
 --
-
+package.path = package.path .. ";./?.lua;./?/init.lua"
 require 'ggnn'
 require 'rnn'
 require 'nn'

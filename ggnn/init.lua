@@ -2,13 +2,12 @@
 --
 -- Yujia Li, 02/2016
 --
-
 require 'nn'
 require 'nngraph'
 require 'torch'
 
 ggnn = {}
-
+unpack = table.unpack
 ggnn.use_gpu = false
 
 ggnn.PROP_NET_PREFIX = 'prop'

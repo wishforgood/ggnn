@@ -2,12 +2,11 @@
 --
 -- Yujia Li, 10/2015
 --
-
 require 'nn'
 require 'nngraph'
 
 rnn = {}
-
+unpack = table.unpack
 -- include all other files
 
 include('rnn_util.lua')
