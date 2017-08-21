@@ -3,20 +3,57 @@
 -- Yujia Li, 03/2016
 --
 
-local GraphLevelOutputNet, BaseOutputNet = torch.class('ggnn.GraphLevelOutputNet', 'ggnn.BaseOutputNet')
+local GraphLevelOutputNet, BaseOutputNet = torch.class('ggnn.GraphLevelOutputNet')
 
 -- output_net_sizes: number of units on each layer of the classification net,
 --      the first number in the list is the input size, and the last number is 
 --      the output size.
 function GraphLevelOutputNet:__init(state_dim, annotation_dim, output_net_sizes, module_dict)
-    BaseOutputNet.__init(self, state_dim, annotation_dim, module_dict)
-
     self.output_net_sizes = output_net_sizes
     self.n_classes = output_net_sizes[#output_net_sizes]
     self.class_net_in_dim = output_net_sizes[1]
-
+    self.state_dim = state_dim
+    self.annotation_dim = annotation_dim
+    self.module_dict = module_dict or {}
     self:create_aggregation_net_modules()
     self:create_output_net()
+    self.vgg_net = vg.load_vggnet()
+end
+
+-- Return a list of parameters and a list of parameter gradients. This function
+-- is inspired by the parameters function in nn/Container.lua
+function GraphLevelOutputNet:parameters()
+    local w = {}
+    local dw = {}
+
+    -- sort the keys to make sure the parameters are always in the same order
+    local k_list = {}
+    for k, v in pairs(self.module_dict) do
+        table.insert(k_list, k)
+    end
+    table.sort(k_list)
+
+    for i=1,#k_list do
+        m = self.module_dict[k_list[i]]
+        local mw, mdw = m:parameters()
+        if mw then
+            if type(mw) == 'table' then
+                for i=1,#mw do
+                    table.insert(w, mw[i])
+                    table.insert(dw, mdw[i])
+                end
+            else
+                table.insert(w, mw)
+                table.insert(dw, mdw)
+            end
+        end
+    end
+    return w, dw
+end
+
+function GraphLevelOutputNet:getParameters()
+    local params, grad_params = self:parameters()
+    return nn.Module.flatten(params), nn.Module.flatten(grad_params)
 end
 
 -- Creates a copy of this network sharing the same module_dict - i.e. using 
@@ -28,7 +65,6 @@ end
 function GraphLevelOutputNet:get_constructor_param_dict()
     return {
         state_dim=self.state_dim,
-        annotation_dim=self.annotation_dim,
         output_net_sizes=self.output_net_sizes
     }
 end
@@ -37,46 +73,12 @@ function ggnn.load_graph_level_output_net_from_file(file_name)
     local d = torch.load(file_name)
     local net = ggnn.GraphLevelOutputNet(
         d['state_dim'],
-        d['annotation_dim'],
         d['output_net_sizes']
     )
     local w = net:getParameters()
     w:copy(d['params'])
 
     return net
-end
-
--- Create all shared modules of the aggregation net.  Actually just two modules
--- the linear module linked to the gates and the linear module to the
--- transformed outputs. Here to be more efficient we construct the two linear
--- modules as one and then use Narrow modules to get separate modules out of
--- the results.
-function GraphLevelOutputNet:create_aggregation_net_modules()
-    ggnn.create_or_share('Linear', ggnn.AGGREGATION_NET_PREFIX .. '-input', self.module_dict, {self.state_dim+self.annotation_dim, 2*self.class_net_in_dim})
-end
-
--- Output net does not change across graphs.
-function GraphLevelOutputNet:create_output_net()
-    local layer_in_dim, layer_out_dim
-    local input = nn.Identity()()
-    local x_input = input
-    for i=1,#self.output_net_sizes-2 do
-        x_input = nn.Tanh()(ggnn.create_or_share('Linear', ggnn.OUTPUT_NET_PREFIX .. '-' .. i, 
-                self.module_dict, {self.output_net_sizes[i], self.output_net_sizes[i+1]})(x_input))
-    end
-
-    if #self.output_net_sizes > 1 then
-        x_input = ggnn.create_or_share('Linear', ggnn.OUTPUT_NET_PREFIX .. '-' .. #self.output_net_sizes-1, self.module_dict,
-                {self.output_net_sizes[#self.output_net_sizes-1], self.output_net_sizes[#self.output_net_sizes]})(x_input)
-    end
-
-    -- Sigmoid for two class problems
-    -- local output = nn.Sigmoid()(x_input)
-    
-    -- Otherwise the linear layer output is the output
-    local output = x_input
-
-    self.output_net = nn.gModule({input}, {output})
 end
 
 -- The input is a concatenation of the final node representations and the initial
@@ -87,42 +89,25 @@ end
 -- networks need to be dynamically created for each graph as different graphs
 -- have different sizes.
 function GraphLevelOutputNet:create_aggregation_net(n_nodes_list)
-    local input = nn.Identity()()
-
-    local act = ggnn.create_or_share('Linear', ggnn.AGGREGATION_NET_PREFIX .. '-input', self.module_dict, {self.state_dim+self.annotation_dim, 2*self.class_net_in_dim})(input)
-    local gates = nn.Sigmoid()(nn.Narrow(2, 1, self.class_net_in_dim)(act))
-    local h = nn.Tanh()(nn.Narrow(2, self.class_net_in_dim+1, self.class_net_in_dim)(act))
-
-    local gated_h = nn.CMulTable()({gates, h})
-
-    local summed_act = {}
-    local idx_offset = 0
-    for i, n_nodes in ipairs(n_nodes_list) do
-        table.insert(summed_act, nn.Reshape(1,self.class_net_in_dim, false)(nn.Sum(1)(nn.Narrow(1, idx_offset+1, n_nodes)(gated_h))))
-        idx_offset = idx_offset + n_nodes
-    end
-
-    local output
-    if #summed_act > 1 then
-        output = nn.Tanh()(nn.JoinTable(1,2)(summed_act))
-    else
-        output = nn.Tanh()(summed_act[1])
-    end
-
-    self.aggregation_net = nn.gModule({input}, {output})
+    local graph_input = nn.Identity()()
+    local image_input = nn.Identity()()
+    local input = nn.Reshape(#n_nodes_list*state_dim, 1)(graph_input)
+    local first_output = ggnn.create_or_share('Linear', ggnn.AGGREGATION_NET_PREFIX .. '-input', self.module_dict, {self.state_dim, self.class_net_in_dim})(input)
+    local second_output = self.vgg_net(image_input)
+    local feature_output = nn.Concat(1)({first_output, second_output})
+    local output = nn.Sigmoid()(feature_output)
+    self.aggregation_net = nn.gModule({graph_input, image_input}, {output})
 end
 
-function GraphLevelOutputNet:forward(node_representations, node_annotations, n_nodes_list)
+function GraphLevelOutputNet:forward(node_representations, n_nodes_list, imagebatch)
     self:create_aggregation_net(n_nodes_list)
-    self.aggregation_net_input = self:prepare_input(node_representations, node_annotations)
-    self.graph_representations = self.aggregation_net:forward(self.aggregation_net_input)
-    return self.output_net:forward(self.graph_representations)
+    self.aggregation_net_input = node_representations
+    return self.aggregation_net:forward(self.aggregation_net_input)
 end
 
 function GraphLevelOutputNet:backward(output_grad)
-    local graph_rep_grad = self.output_net:backward(self.graph_representations, output_grad)
-    local input_grad = self.aggregation_net:backward(self.aggregation_net_input, graph_rep_grad)
-    return self:separate_gradients(input_grad)
+    local input_grad = self.aggregation_net:backward(self.aggregation_net_input, output_grad)
+    return input_grad
 end
 
 function GraphLevelOutputNet:str_repr()

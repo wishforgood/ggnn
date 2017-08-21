@@ -18,24 +18,25 @@ end
 function GSNN:forward(edges_list, n_prop_steps, annotations_list, image_batch)
     self.n_prop_steps = n_prop_steps
     local pnet = self.propagation_net
+    local n_node_list = pnet.n_node_list
     local glnet = self.graph_level_output_net
     local annotations_list_input = annotations_list
     local nodereps
     for t = 1, n_prop_steps do
         nodereps = pnet:forward(edges_list, 1, annotations_list_input) -- node representations
     end
-    self.gl_out = glnet:forward(nodereps, image_batch)
+    self.gl_out = glnet:forward(nodereps, n_node_list, image_batch)
     return self.gl_out
 end
 
 function GSNN:predict(edges_list, n_prop_steps, annotations_list, image_batch)
     local output = self:forward(edges_list, n_prop_steps, annotations_list, image_batch)
-    return output:gt(0)
+    return output:gt(output)
 end
 
 function GSNN:backward(gl_grad)
     local pnet = self.propagation_net
-    local glnet
+    local glnet = self.graph_level_output_net
     local gl_r_grad = glnet:backward(gl_grad)
     return pnet:backward(gl_r_grad)
 end

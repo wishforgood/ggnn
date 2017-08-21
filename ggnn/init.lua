@@ -5,6 +5,7 @@
 require 'nn'
 require 'nngraph'
 require 'torch'
+require 'vg'
 
 ggnn = {}
 unpack = table.unpack
@@ -30,6 +31,7 @@ include('ggnn_util.lua')
 --
 
 include('BaseGGNN.lua')
+include('GSNN.lua')
 -- include('BaseGGNNLinear.lua')
 -- include('BaseGGNNSimple.lua')
 -- include('BaseGGNNSimpleLinear.lua')

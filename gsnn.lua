@@ -42,8 +42,7 @@ local g = ggnn.BaseGGNN(state_dim, annotation_dim, {}, n_edge_types)
 local w, dw = g:getParameters()
 dw:zero()
 
-net = nn.Sequential()
-net:add(g)
+net = nn.Linear()
 
 local y = net:forward(edges, n_steps, annotations)
 c:forward(y, target)
