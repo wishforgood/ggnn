@@ -6,7 +6,7 @@
 -- To change this template use File | Settings | File Templates.
 --
 package.path = package.path .. ';./init.lua;?/init.lua'
-require 'vg'
+--require 'vg'
 
 local vgg_for_test, Parent = torch.class('vg.vgg_for_test', 'nn.Module')
 
