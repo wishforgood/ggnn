@@ -5,7 +5,7 @@
 require 'nn'
 require 'nngraph'
 require 'torch'
-require 'vg'
+--require 'vg'
 
 ggnn = {}
 unpack = table.unpack
