@@ -9,7 +9,7 @@ require 'vg'
 
 ggnn = {}
 unpack = table.unpack
-ggnn.use_gpu = false
+ggnn.use_gpu = False
 
 ggnn.PROP_NET_PREFIX = 'prop'
 ggnn.REVERSE_PROP_NET_PREFIX = 'reverse-prop'
